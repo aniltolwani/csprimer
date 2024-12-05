@@ -12,6 +12,7 @@
 # Stretch: Parse for valid HTTP request in general? headers + request type, etc.
 import socket
 import parser
+import select
 
 PROXY_ADDR = ('127.0.0.1', 8080)
 SERVER_ADDR = ('127.0.0.1', 8000)
@@ -19,58 +20,76 @@ SERVER_ADDR = ('127.0.0.1', 8000)
 
 print("Listening on port 8080")
 
-
-def handle_client(client):
-    while True:
-        upstream_socket = socket.create_connection(SERVER_ADDR)
-        
-        new_req = parser.HTTPRequest()
-        data = b""
-        while not new_req.parse_request(data):
-            chunk = client.recv(4096)
-            if not chunk:
-                upstream_socket.close()
-                return
-            # read the bytestream and figure out if this request is done
-            print("c->*  ", len(chunk))
-            upstream_socket.send(chunk)
-            print("c  *->", len(chunk))
-            data += chunk
-
-        resp = b''
-        while True:
-            chunk = upstream_socket.recv(4096)
-            if not chunk:
-                break
-            print("c  *<-", len(chunk))
-            client.send(chunk)
-            print("c<-*  ", len(chunk))
-            resp += chunk
-
-        upstream_socket.close()
-        print("keep-alive: ", new_req.keep_alive)
-        if not new_req.keep_alive:
-            break
-
-
 if __name__ == "__main__":
     tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # make it reusable
     tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    tcp_socket.setblocking(False)
 
     # bind the socket to the local address
     tcp_socket.bind(PROXY_ADDR)
 
     # listen for incoming connections, need to hanlde multiple potential clients
     tcp_socket.listen(5)
+    input_sockets = [tcp_socket]
+    output_sockets = []
+    requests = {}
 
     while True:
-        try:
-            client, addr = tcp_socket.accept()
-            print("New connection from", addr)
-            handle_client(client)
-            client.close()
-        except Exception as e:
-            print("Error: ", e)
-            continue
+        r_ready, w_ready, exceptional_ready = select.select(input_sockets, output_sockets, [])
+        for current_socket in r_ready:
+            if current_socket == tcp_socket:
+                # tcp socket is ready to accept a new connection
+                client, addr = current_socket.accept()
+                print("New connection from", addr)
+                client.setblocking(False)
+                input_sockets.append(client)
+                requests[client] = (b"", parser.HTTPRequest())
+            else:
+                # we are getting a read request to a client socket
+                # we will assume that the request is < 4096 bytes, but may come in multiple parts
+                partial_data, req = requests[current_socket]
+                data = current_socket.recv(4096)
+                if not data:
+                    # client closed the connection
+                    input_sockets.remove(current_socket)
+                    requests.pop(current_socket)
+                    current_socket.close()
+
+                partial_data += data
+                # check if the request is complete
+                if req.parse_request(partial_data):
+                    # request is complete, send it upstream
+                    requests[current_socket] = (partial_data, req)
+                    output_sockets.append(current_socket)
+                else:
+                    # we need to wait for more data, which we can do on the next loop
+                    requests[current_socket] = (partial_data, req)
+
+        for current_socket in w_ready:
+            # 1. forward to upstream server
+            upstream_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            upstream_socket.connect(SERVER_ADDR)
+            upstream_socket.sendall(requests[current_socket][0])
+            # 2. get response back
+            data = b""
+            while True:
+                chunk = upstream_socket.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            # 3. forward response back to client
+            current_socket.sendall(data)
+            # 4. close connection if not keep alive
+            if not req.keep_alive:
+                input_sockets.remove(current_socket)
+                current_socket.close()
+                del requests[current_socket]
+            else:
+                # this request is processed, but we are keep alive
+                requests[current_socket] = (b"", parser.HTTPRequest())
+            # close the upstream socket (wasteful but much easier to manage)
+            upstream_socket.close()
+            # remove from output and requests, since we have fully proceessed this
+            output_sockets.remove(current_socket)

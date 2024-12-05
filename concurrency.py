@@ -58,7 +58,6 @@ def main():
         for current_socket in w_ready:
             print("c<-*  ", len(RESP))
             current_socket.sendall(RESP)
-            to_send.remove(current_socket)
             write_sockets.remove(current_socket)
 if __name__ == "__main__":
     main()
