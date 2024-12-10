@@ -66,10 +66,6 @@ class HTTPRequest:
             if "gzip" in self.headers['accept-encoding']:
                 self.accept_compress = True
 
-        # we've gotten this far, it's good to go 
-
-        print("Accept-encoding", self.headers.get("accept-encoding", ""))
-        print("Accept flag", self.accept_compress)
         return True 
 
 
@@ -155,12 +151,9 @@ class HTTPResponse:
         first_line = f"{self.http_v} {self.status_code} {self.status_message}\r\n".encode()
         self.add_modified_headers()
         if self.compress:
-            print("trying to compress")
-            print("old length:", len(self.body))
             self.headers['content-encoding'] = 'gzip'
             self.body = gzip.compress(self.body)
             self.headers['content-length'] = len(self.body)
-            print("new length", len(self.body))
         resp_headers = b""
         for key, value in self.headers.items():
             resp_headers += f"{key}: {value}\r\n".encode()

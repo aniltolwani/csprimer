@@ -13,10 +13,17 @@
 import socket
 import parser
 import select
+import hashlib
+from datetime import datetime
 
 PROXY_ADDR = ('127.0.0.1', 8080)
 SERVER_ADDR = ('127.0.0.1', 8000)
 # create a TCP socket
+
+# cache will be key, value pairs of hashed (first_line) -> (res, ttl)
+
+DEFAULT_TTL = 3000
+cache = {}
 
 print("Listening on port 8080")
 
@@ -61,9 +68,16 @@ if __name__ == "__main__":
                 partial_data += data
                 # check if the request is complete
                 if req.parse_request(partial_data):
+                    # check if it's cached, if so we can skip the rest of this path
+                    key = hashlib.sha256("".join([req.req_type, req.file, req.http_v]).encode()).hexdigest()
+                    curr_time = datetime.now().timestamp()
+                    if key in cache and curr_time <= cache[key][1]:
+                        print(f"Cached response. Curr time {curr_time}, expiry time: {cache[key][1]}")
+                        current_socket.sendall(cache[key][0])
                     # request is complete, send it upstream
-                    requests[current_socket] = (partial_data, req)
-                    output_sockets.append(current_socket)
+                    else:
+                        requests[current_socket] = (partial_data, req)
+                        output_sockets.append(current_socket)
                 else:
                     # we need to wait for more data, which we can do on the next loop
                     requests[current_socket] = (partial_data, req)
@@ -88,7 +102,14 @@ if __name__ == "__main__":
                 if resp.parse_response(data):
                     break
             # 3. forward response back to client
-            current_socket.sendall(resp.to_bytes())
+            resp_encoded = resp.to_bytes()
+            current_socket.sendall(resp_encoded)
+            # choose whether or not to cache it
+            if resp.status_code == "200" and req.req_type == "GET":
+                # cache it if the status was good
+                key = hashlib.sha256("".join([req.req_type, req.file, req.http_v]).encode()).hexdigest()
+                curr_time = datetime.now().timestamp()
+                cache[key] = (resp_encoded, curr_time + DEFAULT_TTL)
             # 4. close connection if not keep alive
             if not req.keep_alive or not resp.keep_alive:
                 input_sockets.remove(current_socket)
