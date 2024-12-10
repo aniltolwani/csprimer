@@ -51,6 +51,7 @@ if __name__ == "__main__":
                 # we will assume that the request is < 4096 bytes, but may come in multiple parts
                 partial_data, req = requests[current_socket]
                 data = current_socket.recv(4096)
+                print("c->*  ", len(data))
                 if not data:
                     # client closed the connection
                     input_sockets.remove(current_socket)
@@ -73,14 +74,16 @@ if __name__ == "__main__":
             upstream_socket.connect(SERVER_ADDR)
             req = requests[current_socket][1]
             new_req = req.to_bytes()
+            print("c  *->", len(data))
             upstream_socket.sendall(new_req)
             # 2. get response back
-            resp = parser.HTTPResponse(upstream_addr=SERVER_ADDR)
+            resp = parser.HTTPResponse(upstream_addr=SERVER_ADDR, compress=req.accept_compress)
             data = b""
             while True:
                 chunk = upstream_socket.recv(4096)
                 if not chunk:
                     break
+                print("c  *<-", len(chunk))
                 data += chunk
                 if resp.parse_response(data):
                     break

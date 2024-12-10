@@ -1,7 +1,9 @@
 import io
+import gzip
 
 TO_ADD_HEADERS = ["X-Forwarded-For", "X-Via-Proxy"]
 RESP_HEADERS = []
+MIN_COMPRESSION_LENGTH = 100
 class HTTPRequest:
     def __init__(self, client_addr):
         self.headers = {}
@@ -12,6 +14,7 @@ class HTTPRequest:
         self.keep_alive = None
         self.client_addr = str(client_addr).encode()
         self.via_proxy = True
+        self.accept_compress = None
     
     def parse_request(self, req) -> bool:
         """
@@ -58,7 +61,15 @@ class HTTPRequest:
         if self.keep_alive is None:
             self.keep_alive = self.http_v == "HTTP/1.1"
 
-        # we've gotten this far, it's 
+        self.accept_compress = False
+        if "accept-encoding" in self.headers:
+            if "gzip" in self.headers['accept-encoding']:
+                self.accept_compress = True
+
+        # we've gotten this far, it's good to go 
+
+        print("Accept-encoding", self.headers.get("accept-encoding", ""))
+        print("Accept flag", self.accept_compress)
         return True 
 
 
@@ -82,7 +93,7 @@ class HTTPRequest:
         return first_line + req_headers + b"\r\n\r\n" + self.body
 
 class HTTPResponse:
-    def __init__(self, upstream_addr):
+    def __init__(self, upstream_addr, compress):
         self.headers = {}
         self.body = b""
         self.http_v = b""
@@ -91,6 +102,8 @@ class HTTPResponse:
         self.content_length = None
         self.keep_alive = None
         self.upstream_addr = upstream_addr
+        self.compress = compress
+        self.min_length = MIN_COMPRESSION_LENGTH
     
     def parse_response(self, res):
         bs = io.BytesIO(res)
@@ -125,6 +138,13 @@ class HTTPResponse:
             self.keep_alive = self.headers['connection'] == 'keep-alive'
         if self.keep_alive is None:
             self.keep_alive = self.http_v == b"HTTP/1.1"
+
+        # if client accepts compression + output is not already compressed
+        if self.compress and 'content-encoding' not in self.headers:
+            self.compress = True
+        else:
+            self.compress = False
+
         return True
     
     def add_modified_headers(self):
@@ -134,12 +154,18 @@ class HTTPResponse:
     def to_bytes(self):
         first_line = f"{self.http_v} {self.status_code} {self.status_message}\r\n".encode()
         self.add_modified_headers()
+        if self.compress:
+            print("trying to compress")
+            print("old length:", len(self.body))
+            self.headers['content-encoding'] = 'gzip'
+            self.body = gzip.compress(self.body)
+            self.headers['content-length'] = len(self.body)
+            print("new length", len(self.body))
         resp_headers = b""
         for key, value in self.headers.items():
             resp_headers += f"{key}: {value}\r\n".encode()
         return first_line + resp_headers + b"\r\n" + self.body
-
-
+        
 if __name__ == "__main__":
     new_req = HTTPRequest(client_addr=("127.0.0.1", 12345))
     new_req.parse_request(b"POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\nheyabudddy\r\n\r\n")
