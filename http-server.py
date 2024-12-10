@@ -45,7 +45,7 @@ if __name__ == "__main__":
                 print("New connection from", addr)
                 client.setblocking(False)
                 input_sockets.append(client)
-                requests[client] = (b"", parser.HTTPRequest())
+                requests[client] = (b"", parser.HTTPRequest(client_addr=addr))
             else:
                 # we are getting a read request to a client socket
                 # we will assume that the request is < 4096 bytes, but may come in multiple parts
@@ -71,24 +71,30 @@ if __name__ == "__main__":
             # 1. forward to upstream server
             upstream_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             upstream_socket.connect(SERVER_ADDR)
-            upstream_socket.sendall(requests[current_socket][0])
+            req = requests[current_socket][1]
+            new_req = req.to_bytes()
+            upstream_socket.sendall(new_req)
             # 2. get response back
+            resp = parser.HTTPResponse(upstream_addr=SERVER_ADDR)
             data = b""
             while True:
                 chunk = upstream_socket.recv(4096)
                 if not chunk:
                     break
                 data += chunk
+                if resp.parse_response(data):
+                    break
             # 3. forward response back to client
-            current_socket.sendall(data)
+            current_socket.sendall(resp.to_bytes())
             # 4. close connection if not keep alive
-            if not req.keep_alive:
+            if not req.keep_alive or not resp.keep_alive:
                 input_sockets.remove(current_socket)
                 current_socket.close()
                 del requests[current_socket]
             else:
                 # this request is processed, but we are keep alive
-                requests[current_socket] = (b"", parser.HTTPRequest())
+                # replace the request with a blank one, but keep the client address
+                requests[current_socket] = (b"", parser.HTTPRequest(client_addr=requests[current_socket][1].client_addr))
             # close the upstream socket (wasteful but much easier to manage)
             upstream_socket.close()
             # remove from output and requests, since we have fully proceessed this
