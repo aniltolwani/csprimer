@@ -101,6 +101,13 @@ class HTTPResponse:
         self.compress = compress
         self.min_length = MIN_COMPRESSION_LENGTH
     
+    def get_ttl(self):
+        if "cache-control" in self.headers:
+            # let's just assume it's max-age for now
+            prop, val = self.headers['cache-control'].split("=")
+            return int(val)
+        return None
+    
     def parse_response(self, res):
         bs = io.BytesIO(res)
         first_line = bs.readline().rstrip()
@@ -146,6 +153,7 @@ class HTTPResponse:
     def add_modified_headers(self):
         self.headers["X-Via-Proxy"] = "true"
         self.headers["X-Proxy-Received-From"] = self.upstream_addr
+        self.headers['cache-control'] = "max-age=3600"
 
     def to_bytes(self):
         first_line = f"{self.http_v} {self.status_code} {self.status_message}\r\n".encode()

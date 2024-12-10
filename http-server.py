@@ -109,7 +109,9 @@ if __name__ == "__main__":
                 # cache it if the status was good
                 key = hashlib.sha256("".join([req.req_type, req.file, req.http_v]).encode()).hexdigest()
                 curr_time = datetime.now().timestamp()
-                cache[key] = (resp_encoded, curr_time + DEFAULT_TTL)
+                ttl = DEFAULT_TTL if not resp.get_ttl() else resp.get_ttl()
+                print(f"Caching response with TTL: {ttl/60} minutes.")
+                cache[key] = (resp_encoded, curr_time + ttl)
             # 4. close connection if not keep alive
             if not req.keep_alive or not resp.keep_alive:
                 input_sockets.remove(current_socket)
