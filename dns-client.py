@@ -1,5 +1,4 @@
 # write a basic DNS client capable of 
-# querying for A records and printing the response
 # using the socket library
 # The purpose is to learn another layer protocol
 
@@ -7,74 +6,107 @@ import socket
 import struct
 import random
 
-def name_offset(answer):
-    add = 0
-    while True:
-        x = answer[add]
-        if x == 0xc0:
-            return add + 2
-        if x == 0x00:
-            add += 1
-            break
-        add += 1 + x
-    return add
+DNS_SERVER_IP = "8.8.8.8"
+DNS_SERVER_PORT = 53
+
+RECORD_TYPES = {
+    'A': 1,
+    'NS': 2,
+    'CNAME': 5,
+    'SOA': 6,
+    'MX': 15,
+    'TXT': 16,
+}
 
 def decode_name(response, offset):
     """Decode a DNS name from the response starting at the given offset."""
     result = []
     while True:
-        length = response[offset]
+        length = response[offset] # converts from bytes to int automatically
+        # empty byte indicates the end
         if length == 0:
+            offset += 1
             break
-        if length & 0xC0:  # Compression pointer
-            pointer = struct.unpack('!H', response[offset:offset+2])[0] & 0x3FFF
-            result.extend(decode_name(response, pointer)[0])
+        if length & 0xC0: # Check whether this is a compression pointer
+            full_ptr = response[offset: offset+2]
+            offset_compress = struct.unpack('!H', full_ptr)[0] & 0x3FFF
+            res, _ = decode_name(response, offset_compress)
+            result.extend(res)
+            offset += 2
+            # we have the name so let's break
             break
         else:
+            # just keep going one by one and add it to the response (this is in the case where we are just)
+            # skip to the next byte (i.e. after the length)
             offset += 1
             result.append(response[offset:offset+length].decode('ascii'))
             offset += length
     return result, offset
 
-# create a UDP socket
-udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def get_query(domain, record_type) -> bytes:
+    # 1. create the header
+    # randomly generate an id
+    id = random.randint(0, 0xFFFF) # 2 bytes gives us 16 bits free. So we have (0, 2^16 - 1)
+    # set the flags to 0100, which is the standard query, with RD (recursion desired) set
+    flags = 0x0100 
+    # set the header, QDCOUNT is 1, ANCOUNT, NSCOUNT, and ARCOUNT are 0
+    header = struct.pack('!HHHHHH', id, flags, 1, 0, 0, 0)
+    # 2. create the question
+    qname = b""
+    for label in domain.split('.'):
+        qname += struct.pack('!B', len(label)) + label.encode('ascii')
+    # add a zero to indicate the end of the name
+    qname += struct.pack('!B', 0)
+    # add the type of the record
+    qtype = RECORD_TYPES[record_type]
+    # add the class of the record
+    qclass = 1 # IN (Internet)
+    question = qname + struct.pack('!HH', qtype, qclass)
+    return header + question, id
 
-# send a query to the DNS server
-DNS_SERVER_IP = "8.8.8.8"
-DNS_SERVER_PORT = 53
+def decode_response(response, id):
+    # unpack the response
+    rid, rflags, qdcount, ancount, nscount, arcount = struct.unpack('!HHHHHH', response[:12])
+    # TODO: some parsing on rflags.
+    assert(rid == id)
+    assert qdcount == 1
+    # we are querying an authoritative server, so nscount should be 0
+    assert nscount == 0
+    assert arcount == 0
+    assert ancount > 0
 
-id = random.randint(0, 65535) # 2 bytes gives us 16 bits free. So we have (0, 2^16 - 1)
-flags = 0x0100 # 0100 is the standard query, with RD (recursion desired) set
-header = struct.pack('!HHHHHH', id, flags, 1, 0, 0, 0)
-lookup = "wikipedia.org"
-qname = b""
-for label in lookup.split('.'):
-    qname += struct.pack('!B', len(label)) + label.encode('ascii')
-# end byte
-qname += struct.pack('!B', 0)
+    # let's just skip the question, since it should be the same as the query
+    # start with just the headers, which are 12 bytes (above)
+    offset = 12
+    # decode + skip the name
+    parts, offset = decode_name(response, offset)
+    name = '.'.join(parts)
+    print("first name from resp: ", name)
+    # skip QTYPE and QCLASS
+    offset += 4
+    # in practice, this is just ancount, but this is more general
+    num_resource_records = ancount + nscount + arcount
+    for _ in range(num_resource_records):
+        # decode the rest
+        parts, offset = decode_name(response, offset)
+        name = '.'.join(parts)
+        dns_type, dns_class, ttl, rdlength = struct.unpack('!HHIH', response[offset:offset+10])
+        print(f"Name from req {_}: {name}")
+        print(f"Type: {dns_type}, Class: {dns_class}, TTL: {ttl}, Length: {rdlength}")
+        # read rdlength bytes
+        offset += 10 # (type (2) + class (2) + ttl (4) + rdlength (2))
+        value = response[offset:offset+rdlength]
+        print(f"IP Address: {'.'.join(str(x) for x in value)}")
+        offset += rdlength
 
-qtype = 1 # A record
-qclass = 1 # IN (Internet)
+    return name, dns_type, dns_class, ttl, rdlength, value
 
-question = struct.pack('!HH', qtype, qclass)
-
-udp_socket.sendto(header + qname + question, (DNS_SERVER_IP, DNS_SERVER_PORT))
-response, _ = udp_socket.recvfrom(1024)
-
-rid, rflags, qdcount, ancount, nscount, arcount = struct.unpack('!HHHHHH', response[:12])
-assert(rid == id)
-assert(qdcount == 1)
-assert(ancount == 1)
-assert(nscount == 0)
-assert(arcount == 0)
-# skip the question
-offset = 12 + len(qname) + 4
-answer = response[offset:]
-# let's parse the answer
-add = name_offset(answer)
-name, _ = decode_name(response, offset)  # Use the full response and our current offset
-dns_type, dns_class, ttl, rdlength = struct.unpack('!HHIH', answer[add:add+10])
-print(f"Name: {'.'.join(name)}")
-print(f"Type: {dns_type}, Class: {dns_class}, TTL: {ttl}, Length: {rdlength}")
-value = answer[add+10:add+10+rdlength]
-print(f"IP Address: {'.'.join(str(x) for x in value)}")
+def main():
+    # create a UDP socket
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    query, id = get_query("wikipedia.org", "NS")
+    udp_socket.sendto(query, (DNS_SERVER_IP, DNS_SERVER_PORT))
+    response, _ = udp_socket.recvfrom(1024)
+    resp_decoded = decode_response(response, id)
+if __name__ == "__main__":
+    main()
