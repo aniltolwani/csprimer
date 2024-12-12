@@ -91,20 +91,25 @@ def decode_response(response, id):
         parts, offset = decode_name(response, offset)
         name = '.'.join(parts)
         dns_type, dns_class, ttl, rdlength = struct.unpack('!HHIH', response[offset:offset+10])
-        print(f"Name from req {_}: {name}")
-        print(f"Type: {dns_type}, Class: {dns_class}, TTL: {ttl}, Length: {rdlength}")
-        # read rdlength bytes
         offset += 10 # (type (2) + class (2) + ttl (4) + rdlength (2))
-        value = response[offset:offset+rdlength]
-        print(f"IP Address: {'.'.join(str(x) for x in value)}")
+        print(f"Name from request: {name}")
+        print(f"Type: {dns_type}, Class: {dns_class}, TTL: {ttl}, Length: {rdlength}")
+        if dns_type == RECORD_TYPES['NS']:
+            ns_parts, _ = decode_name(response, offset)
+            ns_name = '.'.join(ns_parts)
+            print(f"NS Name: {ns_name}")
+        elif dns_type == RECORD_TYPES['A']:
+            value = response[offset:offset+rdlength]
+            ip_address = '.'.join(str(x) for x in value)
+            print(f"IP Address: {ip_address}")
         offset += rdlength
 
-    return name, dns_type, dns_class, ttl, rdlength, value
+    return name, dns_type, dns_class, ttl, rdlength
 
 def main():
     # create a UDP socket
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    query, id = get_query("wikipedia.org", "NS")
+    query, id = get_query("wikipedia.org", "A")
     udp_socket.sendto(query, (DNS_SERVER_IP, DNS_SERVER_PORT))
     response, _ = udp_socket.recvfrom(1024)
     resp_decoded = decode_response(response, id)
