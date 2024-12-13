@@ -1,3 +1,4 @@
+import csv
 # let's implement a simple, mock relational DB
 # need to support
 # projection (subset of columns)
@@ -11,8 +12,21 @@
 # the next method will yield the next row of the query one by one.
 # importantly, you can assume that queries are already parsed.
 
+class QueryNode(object):
+    def __init__(self):
+        self.child = None
 
-class MemoryScan(object):
+    def __next__(self):
+        if self.child is None:
+            return None
+        return next(self.child)
+
+    def close(self):
+        print("close called on", self)
+        if self.child is not None:
+            self.child.close()
+
+class MemoryScan(QueryNode):
     """
     Yield all records from the given "table" in memory.
 
@@ -22,7 +36,7 @@ class MemoryScan(object):
     def __init__(self, table):
         self.table = table
         self.idx = 0
-
+        self.child = None
     def __next__(self):
         if self.idx >= len(self.table):
             return None
@@ -32,7 +46,7 @@ class MemoryScan(object):
         return x
 
 
-class Projection(object):
+class Projection(QueryNode):
     """
     Map the child records using the given map function, e.g. to return a subset
     of the fields.
@@ -49,7 +63,7 @@ class Projection(object):
             return self.proj(x)
         return None
 
-class Selection(object):
+class Selection(QueryNode):
     """
     Filter the child records using the given predicate function.
 
@@ -70,7 +84,7 @@ class Selection(object):
             x = next(self.child)
         return None
 
-class Limit(object):
+class Limit(QueryNode):
     """
     Return only as many as the limit, then stop
     """
@@ -89,7 +103,7 @@ class Limit(object):
                 return x
         return None
 
-class Sort(object):
+class Sort(QueryNode):
     """
     Sort based on the given key function
     """
@@ -131,6 +145,39 @@ def Q(*nodes):
         parent = n
     return root
 
+class CSVScanner:
+    def __init__(self, file_path, schema):
+        self.file_path = file_path
+        self.file = open(file_path, 'r')
+        self.reader = csv.reader(self.file)
+        self.schema = schema
+        self.header = next(self.reader)
+        self.child = None
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            next_val = next(self.reader)
+            # try schema validation
+            for idx, val in enumerate(next_val):    
+                next_val[idx] = self.schema[idx][1](val)
+            if len(next_val) != len(self.schema):
+                raise ValueError("Schema validation error, number of columns in row does not match schema")
+            return tuple(next_val)
+        except StopIteration:
+            self.file.close()
+            return None
+        # schema validation error
+        except ValueError as e:
+            print("ValueError, probably a schema validation error", e)
+            raise e
+        
+    def close(self):
+        if self.file:
+            print('run the close on the file')
+            self.file.close()
+
 
 def run(q):
     """
@@ -141,6 +188,7 @@ def run(q):
         if x is None:
             break
         yield x
+    q.close()
 
 
 if __name__ == '__main__':
@@ -268,6 +316,19 @@ if __name__ == '__main__':
         ('emppen1',),
     )
 
+    movie_schema = (
+        ('movieId', int),
+        ('title', str),
+        ('genres', str)
+    )
+    print(len(tuple(run(Q(CSVScanner('./movies.csv', movie_schema))))))
+    # top 10 movies, sorted by title
+    print("top 10 movies, sorted by title")
+    print(tuple(run(Q(
+        Projection(lambda x: (x[1],)),
+        Limit(10),
+        Sort(lambda x: x[1], desc=False),
+        CSVScanner('./movies.csv', movie_schema)
+    ))))
 
-    print('ok')
 

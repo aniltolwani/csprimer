@@ -8,5 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
-.csv
+*.csv
 uv.lock
+*.lock
