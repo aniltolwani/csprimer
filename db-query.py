@@ -13,6 +13,11 @@ import csv
 # importantly, you can assume that queries are already parsed.
 
 class QueryNode(object):
+    """"
+    We can define a custom parent class for all the nodes, and then inherit from it.
+    
+    This lets us define a close method that will cascade from root -> leaf nodes. (Right now we really only support leaf -> root with returning None).
+    """
     def __init__(self):
         self.child = None
 
@@ -22,7 +27,6 @@ class QueryNode(object):
         return next(self.child)
 
     def close(self):
-        print("close called on", self)
         if self.child is not None:
             self.child.close()
 
@@ -321,14 +325,22 @@ if __name__ == '__main__':
         ('title', str),
         ('genres', str)
     )
-    print(len(tuple(run(Q(CSVScanner('./movies.csv', movie_schema))))))
-    # top 10 movies, sorted by title
-    print("top 10 movies, sorted by title")
+    # print(len(tuple(run(Q(CSVScanner('./movies.csv', movie_schema))))))
+    # # top 10 movies, sorted by title
+    # print("top 10 movies, sorted by title")
+    # print(tuple(run(Q(
+    #     Projection(lambda x: (x[1],)),
+    #     Limit(10),
+    #     Sort(lambda x: x[1], desc=False),
+    #     CSVScanner('./movies.csv', movie_schema)
+    # ))))
     print(tuple(run(Q(
-        Projection(lambda x: (x[1],)),
         Limit(10),
+        Selection(lambda x: x[0] == 5_000),
         Sort(lambda x: x[1], desc=False),
         CSVScanner('./movies.csv', movie_schema)
     ))))
+    print("done")
+
 
 
