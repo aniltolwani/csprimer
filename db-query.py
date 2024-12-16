@@ -148,7 +148,7 @@ def Q(*nodes):
         parent.child = n
         parent = n
     return root
-
+import struct
 class CSVScanner:
     def __init__(self, file_path, schema):
         self.file_path = file_path
@@ -182,15 +182,57 @@ class CSVScanner:
             print('run the close on the file')
             self.file.close()
 
+PAGE_SIZE = 8192
 class FileScanner(QueryNode):
     """
     Class to work with heap files specified in heap-db.py
     """
     def __init__(self, file_path, schema):
-        self.file_path = file_path
         self.schema = schema
         self.child = None
+        self.record_idx = 0
+        self.file = open(file_path, 'rb')
+        self.page_buff = None
+        self.num_records = 0
+    
+    def __next__(self):
+        if self.page_buff is None:
+            self.page_buff = self.file.read(PAGE_SIZE)
+            if len(self.page_buff) < PAGE_SIZE:
+                return None
+            self.record_idx = 0
+            self.num_records = int.from_bytes(self.page_buff[4:8], "little")
+        record_start = 8 + self.record_idx * 8
+        record_end = record_start + 8
+        start, end = struct.unpack("II", self.page_buff[record_start:record_end])
+        data_start = 8 + self.num_records * 8 + start
+        record = self.decode_record(self.page_buff[data_start:data_start+end-start])
+        self.record_idx += 1
+        if self.record_idx >= self.num_records:
+            self.page_buff = None
+        return record
 
+    def decode_record(self, data) -> tuple:
+        record = []
+        idx = 0
+        for col, type in self.schema:
+            if type == int or type == float:
+                value = int.from_bytes(data[idx:idx+4], "little")
+                idx += 4
+            elif type == str:
+                length = int.from_bytes(data[idx:idx+1], "little")
+                value = data[idx+1:idx+length+1].decode("utf-8")
+                idx += length + 1
+            else:
+                raise ValueError(f"Invalid type: {type}")
+            record.append(value)
+        return tuple(record)
+    
+    def close(self):
+        print("closing file in file scanner")
+        if self.file:
+            self.file.close()
+    
 def run(q):
     """
     Run the given query to completion by calling `next` on the (presumed) root
@@ -347,6 +389,14 @@ if __name__ == '__main__':
         Selection(lambda x: x[0] == 5_000),
         Sort(lambda x: x[1], desc=False),
         CSVScanner('./movies.csv', movie_schema)
+    ))))
+
+    # test the movies HF
+    print(tuple(run(Q(
+        Limit(10),
+        Selection(lambda x: x[0] == 5_000),
+        Sort(lambda x: x[1], desc=False),
+        FileScanner('./movies.hf', movie_schema)
     ))))
     print("done")
 
