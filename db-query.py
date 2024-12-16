@@ -182,6 +182,14 @@ class CSVScanner:
             print('run the close on the file')
             self.file.close()
 
+class FileScanner(QueryNode):
+    """
+    Class to work with heap files specified in heap-db.py
+    """
+    def __init__(self, file_path, schema):
+        self.file_path = file_path
+        self.schema = schema
+        self.child = None
 
 def run(q):
     """
