@@ -32,13 +32,16 @@ class B_plus_Tree_Node(object):
                 if key < k_node:
                     k_idx = i
                     break
-            n_idx = k_idx + 1 if k_idx != -1 else len(self.keys)
+            n_idx = k_idx if k_idx != -1 else len(self.keys)
+            print(f"inserting {key} into child {n_idx}. k_idx was {k_idx}")
             ret = self.children[n_idx].insert(key, value)
             if isinstance(ret, tuple):
                 # we can use an isinstance check for if a split occurred
                 # importantly, this could be a leaf split or an internal split
                 # but, we know the current node is an internal node, so we can safely use the result
                 median_key, left_node = ret
+                if median_key == 32 and left_node.keys == [20,21]:
+                    breakpoint()
                 self.keys.insert(k_idx if k_idx != -1 else len(self.keys), median_key)
                 self.children.insert(n_idx, left_node)
                 if len(self.keys) > self.max_nodes:
@@ -62,18 +65,11 @@ class B_plus_Tree_Node(object):
         
         self.keys.insert(k_idx if k_idx != -1 else len(self.keys), key)
         self.vals.insert(n_idx, value)
-        
+         
         if len(self.keys) > self.max_nodes:
             median_key, left_node = self.split_leaf()
-            # Check if we're root (no parent = no children list)
-            if not self.children:  # Root leaf node
-                new_root = B_plus_Tree_Node(is_leaf=False)
-                new_root.keys = [median_key]
-                new_root.children = [left_node, self]
-                return new_root
             # Non-root leaf node - return split info to parent
             return median_key, left_node
-        
         # if we reach here, we're done. just return the current node.
         return self
 
@@ -118,34 +114,70 @@ class B_plus_Tree_Node(object):
         Pretty print the tree in a nice ascii-type format.
         Just to help us visualize as we make changes.
         """
-        def _pprint(node, level=0):
+        def _pprint(node, level=0, c_idx=0):
             # Print current node's keys with proper indentation
-            print('  ' * level + str(node.keys))
+            print("level", level, "c_idx", c_idx)
+            print('  ' * (level + c_idx) + str(node.keys))
             
             # Recursively print children
-            for child in node.children:
-                _pprint(child, level + 1)
+            for c_idx, child in enumerate(node.children):
+                _pprint(child, level + 1, c_idx)
         
         # Start printing from root
         _pprint(self)
 
+class B_plus_Tree(object):
+    """
+    We need a storage object for the root node.
+    
+    Makes the interface a bit cleaner.
+    
+    And lets us make a new root node when we need to.
+    """
+    def __init__(self, min_nodes = 2, max_nodes = 4):
+        self.root = B_plus_Tree_Node(min_nodes, max_nodes, is_leaf=True)
+    
+    def insert(self, key, value):
+        ret = self.root.insert(key, value)
+        if isinstance(ret, tuple):
+            # handle the case where we need to create a new root node
+            median_key, left_node = ret
+            if not self.root.children:
+                new_root = B_plus_Tree_Node(is_leaf=False)
+                new_root.keys = [ median_key]
+                new_root.children = [left_node, self.root]
+                self.root = new_root
+                return self.root
+            else:
+                print("this is weird.")
+                raise Exception("this is weird.")
+        return ret
+    
+    def pprint(self):
+        self.root.pprint()
+
+
 def __main__():
-    root = B_plus_Tree_Node()
+    tree = B_plus_Tree()
     print("Initial tree state:")
-    root.pprint()
+    tree.pprint()
     # imagine these are (page_idx, row_idx pairs (i.e. in postgres))
     test_data = {
-        "alice@gmail.com": (0, 0),
-        "bob@gmail.com": (0, 1),
-        "carol@gmail.com": (0, 2),
-        "barb@gmail.com": (1, 0),
-        "eve@gmail.com": (1, 1),
+        18: (0, 0),
+        25: (0, 1),
+        32: (0, 2),
+        45: (1, 0),
+        67: (1, 1),
+        20: (2, 0),
+        21: (2, 1),
+        22: (2, 2),
+        90: (3, 0),
     }
 
-    for email, (page_idx, row_idx) in test_data.items():
-        root = root.insert(email, (page_idx, row_idx))
+    for age, (page_idx, row_idx) in test_data.items():
+        tree.insert(age, (page_idx, row_idx))
         print("Tree state after inserting test data:")
-        root.pprint()
+        tree.pprint()
 
 if __name__ == "__main__":
     __main__()
