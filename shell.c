@@ -18,9 +18,19 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <unistd.h> // fork, execvp, and sleep
+#include <sys/wait.h>
+volatile pid_t child_pid = 0;
 
 void handle_signal(int sig){
-    printf("Signal %d received\n", sig);
+    if (child_pid != 0){
+        printf("Signal %d received\n in PID: %d\n", sig, child_pid);
+        kill(child_pid, sig);
+    }
+    else {
+        printf("No child process running\n");
+        printf("shell> ");
+        fflush(stdout);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -71,14 +81,14 @@ int main(int argc, char **argv) {
             printf("Arg %d: %s\n", j, args[j]);
         }
         // just sleep for a bit to see what's going on
-        pid_t pid = fork();
-        if (pid == 0){
-            signal(SIGINT, SIG_DFL);
-            signal(SIGTERM, SIG_DFL);
+        child_pid = fork();
+        if (child_pid == 0){
             execvp(args[0], args);
+            perror("execvp failed if we get here");
         }
         else {
-            waitpid(pid, NULL, 0);
+            waitpid(child_pid, NULL, 0);
+            child_pid = 0;
         }
         free(line);
     }
