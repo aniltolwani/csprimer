@@ -60,5 +60,7 @@ def main():
     print("---NEW RUN---")
     print("hi")
     test_varint()
+    for n in range(1 << 30):
+        assert decode(encode(n)) == n
 if __name__ == "__main__":
     main()
