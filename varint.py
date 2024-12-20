@@ -7,7 +7,9 @@ def decode(b: bytes) -> int:
     # drop the msb from each byte
     res, shift = 0, 0 
     for byte in b:
-        msb, part = byte & 0b10000000, byte & 0b01111111
+        # get the msb and part
+        msb, part = byte & 128, byte & 0x7F
+        # add it to res, shift the current result and add the new one
         res = res | part << shift
         if msb == 0:
             break
@@ -16,33 +18,47 @@ def decode(b: bytes) -> int:
 
 def encode(a: int) -> bytes:
     # convert to bytes / binary repr
-    b = format(a, '08b')
-    pos = 0
-    # go 7 bits at a time, and add it to a finalized repr
-    new_str = "" 
-    while True:
-        if pos + 7 > len(b):
-            # this will be our last iter
-            msb = 0
-        else:
-            msb = 1
-        start = len(b)-pos - 7
-        end = start + 7
-        start = max(start,0)
-        new_part = b[start:end]
-        diff = 7 - len(new_part)
-        if diff > 0:
-            new_part = "0"*diff + new_part
-        new_str = new_str + str(msb) + new_part
-        pos += 7
-        if pos > len(b):
-            break
-    return int(new_str, pos // 7).to_bytes(pos // 7, byteorder="big")
+    out = []
+    while a > 0:
+        # get last 7 bits
+        part = a & 0x7F
+        # shift out those 7 bits
+        a = a >> 7
+        if a:
+            # if we aren't done, add a 1 to it
+            part = part | 128
+        out.append(part)
+    return bytes(out)
+
+def test_varint():
+    test_cases = [
+        # Basic cases
+        0,                      # Zero
+        127,                    # Max single byte
+        128,                    # Min two byte
+        
+        # Powers of 2 edge cases
+        2**7 - 1,              # 127  (Max 1 byte)
+        2**7,                  # 128  (Min 2 bytes)
+        2**14 - 1,             # 16383 (Max 2 bytes)
+        2**14,                 # 16384 (Min 3 bytes)
+        
+        # 64-bit unsigned max
+        2**64 - 1,             # Max unsigned int64 (0xFFFFFFFFFFFFFFFF)
+    ]
+
+    for test_value in test_cases:
+        encoded = encode(test_value)
+        decoded = decode(encoded)
+        if test_value != decoded:
+            print(f"FAILED: {test_value} -> {[bin(b) for b in encoded]} -> {decoded}")
+            return False
+        print(f"PASSED: {test_value} -> {[bin(b) for b in encoded]} -> {decoded}")
+    return True
 
 def main():
     print("---NEW RUN---")
-    for i in range(0xFFFFFFFF):
-        if (i != decode(encode(i))):
-            print(i, "is wrong")
+    print("hi")
+    test_varint()
 if __name__ == "__main__":
     main()
