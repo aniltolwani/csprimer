@@ -10,4 +10,5 @@ dependencies = [
     "pandas>=2.2.3",
     "psutil>=6.1.0",
     "pytest>=8.3.4",
+    "regex>=2024.11.6",
 ]
