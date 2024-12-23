@@ -13,7 +13,6 @@ while true:
          c. (5) -> check for row-win, col-win, diag-1win, diag-2 win
     4b. check for tie (all squares are not empty) -> print("tie") -> break
     5. set current_player_state = o or x depending on current
-
 """
 import numpy as np
 
