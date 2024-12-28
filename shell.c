@@ -12,6 +12,11 @@
 //         - i.e. if you do sleep and ctrl-c, the shell should NOT exit -- only the sleep process should exit
 //     - Don't handle strings. just tokenize on spaces and tabs.
 // """
+// TODO: 
+// - parse until multiple commands and handle them iteratively
+// - use pipe and dup2 to handle changing the stdout of first command -> second
+// - setup the parser to handle and take care of multiple args together
+
 
 #include <stdio.h>
 #include <string.h>
@@ -31,6 +36,34 @@ void handle_signal(int sig){
         printf("shell> ");
         fflush(stdout);
     }
+}
+
+char** parse_command(char *command){
+    printf("Getting passed into parse_command: %s\n", command);
+    char* temp = strdup(command);
+    // tokenize and get the command
+    // first, let's get a count for malloc
+    int count = 0;
+    char* token = strtok(temp, " \t");
+    while (token){
+        count += 1;
+        token = strtok(NULL, " \t");
+    }
+    free(temp);
+
+    char** args = malloc((count + 1) * sizeof(char*));
+    token = strtok(command, " \t");
+    int i = 0;
+    while (token){
+        args[i] = token;
+        token = strtok(NULL, " \t");
+        i++;
+    }
+    args[i] = NULL;
+    for (int i = 0; i < count; i ++){
+        printf("Arg %d: %s\n", i, args[i]);
+    }
+    return args;
 }
 
 int main(int argc, char **argv) {
@@ -61,35 +94,46 @@ int main(int argc, char **argv) {
         
         printf("You said: %s which was %zu characters long from a buffer of %zu\n", line, chars_read, buf_len);
 
-        // tokenize and get the command
-        char *command = strtok(line, " \t");
-        char *args[10];
-        int i = 0;
-        while (1){
-            args[i] = command;
-            command = strtok(NULL, " \t");
-            i++;
-            if (command == NULL) break;
-        }
-        args[i] = NULL;
-        if (strcmp(args[0], "exit") == 0){
-            free(line);
-            break;
-        }
-        printf("Command: %s\n", args[0]);
-        for (int j = 0; j < i + 1; j++){
-            printf("Arg %d: %s\n", j, args[j]);
-        }
-        // just sleep for a bit to see what's going on
-        child_pid = fork();
-        if (child_pid == 0){
-            execvp(args[0], args);
+        // split into two commands (we will extend this later)
+        char *command1 = strtok(line, "|");
+        char* temp1 = strdup(command1);
+        char *command2 = strtok(NULL, "|");
+        char* temp2 = strdup(command2);
+
+        char** args1 = parse_command(temp1);
+        char** args2 = parse_command(temp2);
+        
+        int pip_fd[2];
+        //  0 -> read; 1 -> write
+        pipe(pip_fd);
+        
+        pid_t pid1 = fork();
+        if (pid1 == 0){
+            // stop the read
+            close(pip_fd[0]);
+            // pipe it to write
+            dup2(pip_fd[1], STDOUT_FILENO);
+            // close the write since we have duped it. TODO: understand this better. 
+            close(pip_fd[1]);
+            execvp(args1[0], args1);
             perror("execvp failed if we get here");
         }
-        else {
-            waitpid(child_pid, NULL, 0);
-            child_pid = 0;
+
+        pid_t pid2 = fork();
+        if (pid2 == 0){
+            // stop the write
+            close(pip_fd[1]);
+            // pipe it to read
+            dup2(pip_fd[0], STDIN_FILENO);
+            // close the read since we have used it.
+            close(pip_fd[0]);
+            execvp(args2[0], args2);
+            perror("execvp failed if we get here");
         }
+        close(pip_fd[0]);
+        close(pip_fd[1]);
+        waitpid(pid1, NULL, 0);
+        waitpid(pid2, NULL, 0);
         free(line);
     }
     return 0;

@@ -34,7 +34,7 @@ int main() {
     }
     long num_blocks = 0;
 
-    for (int i = 0; i < ONE_MEG; i++) {
+    for (int i = 0; i < 1048577; i++) {
         if (write(fd, &byte, 1) != 1) {
             perror("Write failed");
             close(fd);
@@ -43,10 +43,17 @@ int main() {
         long fs = get_file_size("test.txt");
         long bs = get_block_size("test.txt");
         if (num_blocks != bs){
-            printf("Block Size: %ld. Allocated size: %ld. File Size: %ld.\n Iteration %d.",  bs, bs * 512, fs, i);
+            printf("Block Size: %ld. Allocated size: %ld. File Size: %ld. Iteration %d\n",  
+                   bs, bs * 512, fs, i);
             num_blocks = bs;
         }
     }
+    
+    long final_fs = get_file_size("test.txt");
+    long final_bs = get_block_size("test.txt");
+    printf("\nFinal Status:\n");
+    printf("Actual file size: %ld bytes\n", final_fs);
+    printf("Allocated blocks: %ld (Total: %ld bytes)\n", final_bs, final_bs * 512);
     
     close(fd);
     return 0;
