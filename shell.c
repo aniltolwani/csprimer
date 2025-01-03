@@ -16,6 +16,10 @@
 // - parse until multiple commands and handle them iteratively
 // - use pipe and dup2 to handle changing the stdout of first command -> second
 // - setup the parser to handle and take care of multiple args together
+// Plan:
+    // 1. parse the number of pipes using a copied string and strsep
+    // 2. Run parse command on each one... maybe store them in an array of pointers to pointers.. i.e. char** [10]
+    // 3. Run all of them... 
 
 
 #include <stdio.h>
@@ -39,7 +43,7 @@ void handle_signal(int sig){
 }
 
 char** parse_command(char *command){
-    printf("Getting passed into parse_command: %s\n", command);
+    // printf("Getting passed into parse_command: %s\n", command);
     char* temp = strdup(command);
     // tokenize and get the command
     // first, let's get a count for malloc
@@ -60,9 +64,6 @@ char** parse_command(char *command){
         i++;
     }
     args[i] = NULL;
-    for (int i = 0; i < count; i ++){
-        printf("Arg %d: %s\n", i, args[i]);
-    }
     return args;
 }
 
@@ -92,48 +93,86 @@ int main(int argc, char **argv) {
             chars_read--;  // adjust the count since we removed a character
         }
         
-        printf("You said: %s which was %zu characters long from a buffer of %zu\n", line, chars_read, buf_len);
-
+        printf("You said: %s which was %zu characters long from a BUFFER of %zu\n", line, chars_read, buf_len);
         // split into two commands (we will extend this later)
-        char *command1 = strtok(line, "|");
-        char* temp1 = strdup(command1);
-        char *command2 = strtok(NULL, "|");
-        char* temp2 = strdup(command2);
+        int pipe_count = 0;
+        char *temp_line = strdup(line);
+        char* token = strtok(temp_line, "|");
+        while (token){
+            pipe_count += 1;
+            token = strtok(NULL, "|");
+        }
+        printf("Pipe count is: %d", pipe_count);
+        free(temp_line);
+        // // TODO: this seems suspect, but what I essentially want is somethign close to a 3d char array -- 1-10 piped arguments, each argument is an array of strings (which is an array of st)
+        char** args_[10];
+        char* commands[10];
+        token = strtok(line, "|");
+        for (int i = 0; i < pipe_count; i++ ){
+            // args_[i] = parse_command(token);
+            commands[i] = token;
+            token = strtok(NULL, "|");
+        }
 
-        char** args1 = parse_command(temp1);
-        char** args2 = parse_command(temp2);
-        
-        int pip_fd[2];
+        for (int i = 0; i < pipe_count; i++ ){
+            args_[i] = parse_command(commands[i]);
+        }
+        // this is just an array of file descriptiors that we will populate
+        int pip_fd[pipe_count][2];
+        pid_t child_pids[pipe_count];
         //  0 -> read; 1 -> write
-        pipe(pip_fd);
+        pipe(pip_fd[0]);
         
-        pid_t pid1 = fork();
-        if (pid1 == 0){
-            // stop the read
-            close(pip_fd[0]);
-            // pipe it to write
-            dup2(pip_fd[1], STDOUT_FILENO);
-            // close the write since we have duped it. TODO: understand this better. 
-            close(pip_fd[1]);
-            execvp(args1[0], args1);
+        // first command here
+        child_pids[0] = fork();
+        if (child_pids[0] == 0){ // write only pipe
+            dup2(pip_fd[0][1], STDOUT_FILENO);
+            // stop the read. TODO: Why do, we need to stop the read? can't we just keep it open?
+            close(pip_fd[0][0]);
+            close(pip_fd[0][1]);
+            execvp(args_[0][0], args_[0]);
             perror("execvp failed if we get here");
+        }
+        // after the write only pipe is done, we can close it in the parent
+        close(pip_fd[0][1]);
+
+        for (int i = 1; i < pipe_count-1; i ++ ){
+            pipe(pip_fd[i]);
+            child_pids[i] = fork(); 
+            if (child_pids[i] == 0){ // read and write pipe
+                // let's not close anything here..
+                // read from the previous pipe and write to the current
+                dup2(pip_fd[i-1][0], STDIN_FILENO);
+                dup2(pip_fd[i][1], STDOUT_FILENO);
+                // now, we need to close read of prev and r+w of curr
+                close(pip_fd[i-1][0]);
+                close(pip_fd[i][0]);
+                close(pip_fd[i][1]);
+                execvp(args_[i][0], args_[i]);
+                perror("assuming this is still an error");
+            }
+            // now, we are done with this. we can close the read for the previous and the write for the current.
+            close(pip_fd[i-1][0]);
+            close(pip_fd[i][1]);
         }
 
-        pid_t pid2 = fork();
-        if (pid2 == 0){
+        // last command here, no pipe needed 
+        child_pids[pipe_count-1] = fork();
+        if (child_pids[pipe_count-1] == 0){ // read only pipe
             // stop the write
-            close(pip_fd[1]);
-            // pipe it to read
-            dup2(pip_fd[0], STDIN_FILENO);
-            // close the read since we have used it.
-            close(pip_fd[0]);
-            execvp(args2[0], args2);
+            dup2(pip_fd[pipe_count-2][0], STDIN_FILENO);
+            // do we need to close the write end here?
+            close(pip_fd[pipe_count-2][0]);
+            execvp(args_[pipe_count-1][0], args_[pipe_count-1]);
             perror("execvp failed if we get here");
         }
-        close(pip_fd[0]);
-        close(pip_fd[1]);
-        waitpid(pid1, NULL, 0);
-        waitpid(pid2, NULL, 0);
+        // close the final read end since we are done using it.
+        close(pip_fd[pipe_count-2][0]);
+
+        for (int i = 0; i < pipe_count; i++){
+            waitpid(child_pids[i], NULL, 0);
+        }
+
         free(line);
     }
     return 0;
